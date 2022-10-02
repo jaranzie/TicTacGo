@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
@@ -37,14 +36,14 @@ type UnregisteredUser struct {
 }
 
 type Game struct {
-	Id        int32  `bson:"_id" json:"id"`
-	Grid      []rune `bson:"grid" json:"grid"`
-	Winner    rune   `bson:"winner" json:"winner"`
-	StartDate string `bson:"start_date" json:"start_date"`
+	Id        int32    `bson:"_id" json:"id"`
+	Grid      []string `bson:"grid" json:"grid"`
+	Winner    string   `bson:"winner" json:"winner"`
+	StartDate string   `bson:"start_date" json:"start_date"`
 }
 
 type Move struct {
-	Move int `json:"move"`
+	Move *int `json:"move"`
 }
 
 func sendEmail(user *UnregisteredUser) error {
@@ -66,71 +65,71 @@ func randomString(length int) string {
 }
 
 func playGame(g *Game) {
-	var winner rune
+	var winner string
 	winner = checkWinner(g)
-	if winner != ' ' {
+	if winner != " " {
 		g.Winner = winner
 		return
 	}
 	start := 4
 	for true {
-		if g.Grid[start] == ' ' {
-			g.Grid[start] = 'O'
+		if g.Grid[start%9] == " " {
+			g.Grid[start%9] = "O"
 			break
 		}
 		start = start + 2
 	}
 	winner = checkWinner(g)
-	if winner != ' ' {
+	if winner != " " {
 		g.Winner = winner
 	}
 }
 
-func checkWinner(g *Game) rune {
+func checkWinner(g *Game) string {
 	grid := g.Grid
-	if grid[0] != ' ' && grid[0] == grid[1] && grid[1] == grid[2] {
+	if grid[0] != " " && grid[0] == grid[1] && grid[1] == grid[2] {
 		return grid[0]
 	}
-	if grid[3] != ' ' && grid[3] == grid[4] && grid[4] == grid[5] {
+	if grid[3] != " " && grid[3] == grid[4] && grid[4] == grid[5] {
 		return grid[3]
 	}
-	if grid[6] != ' ' && grid[6] == grid[7] && grid[7] == grid[8] {
+	if grid[6] != " " && grid[6] == grid[7] && grid[7] == grid[8] {
 		return grid[6]
 	}
 	// Vertical
-	if grid[0] != ' ' && grid[0] == grid[3] && grid[3] == grid[6] {
+	if grid[0] != " " && grid[0] == grid[3] && grid[3] == grid[6] {
 		return grid[0]
 	}
-	if grid[1] != ' ' && grid[1] == grid[4] && grid[4] == grid[7] {
+	if grid[1] != " " && grid[1] == grid[4] && grid[4] == grid[7] {
 		return grid[1]
 	}
-	if grid[2] != ' ' && grid[2] == grid[5] && grid[5] == grid[8] {
+	if grid[2] != " " && grid[2] == grid[5] && grid[5] == grid[8] {
 		return grid[2]
 	}
 	// Diagonal
-	if grid[0] != ' ' && grid[0] == grid[4] && grid[4] == grid[8] {
+	if grid[0] != " " && grid[0] == grid[4] && grid[4] == grid[8] {
 		return grid[0]
 	}
-	if grid[2] != ' ' && grid[2] == grid[4] && grid[4] == grid[6] {
+	if grid[2] != " " && grid[2] == grid[4] && grid[4] == grid[6] {
 		return grid[2]
 	}
 	numSpaces := 0
 	for i := 0; i < 9; i++ {
-		if grid[i] == ' ' {
+		if grid[i] == " " {
 			numSpaces++
 		}
 	}
 	if numSpaces == 0 {
-		return 'T'
+		return "T"
 	}
-	return ' '
+	return " "
 }
 
 /* Returns Inserted ID */
 func newGame(gameCollection *mongo.Collection) int32 {
 	var g Game
-	g.Grid = []rune{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '}
-	g.Winner = ' '
+	g.Grid = []string{" ", " ", " ", " ", " ", " ", " ", " ", " "}
+	g.Winner = " "
 	g.StartDate = time.Now().String()
 	g.Id = gameIndex
 	gameIndex++
@@ -218,12 +217,7 @@ func main() {
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
 		if u.VerificationCode == key {
-			newGameID := newGame(games)
-			if newGameID < 0 {
-				fmt.Println("Problem inserting")
-				return c.JSON(fiber.Map{"status": "ERROR"})
-			}
-			r := RegisteredUser{u.Username, u.Email, u.Password, []int32{}, newGameID}
+			r := RegisteredUser{u.Username, u.Email, u.Password, []int32{}, -1}
 			_, err := registeredusers.InsertOne(context.TODO(), r)
 			if err != nil {
 				return c.JSON(fiber.Map{"status": "ERROR"})
@@ -269,76 +263,108 @@ func main() {
 
 	app.Post("/ttt/play", func(c *fiber.Ctx) error {
 		var mo Move
-		if err := c.BodyParser(mo); err != nil {
+		if err := c.BodyParser(&mo); err != nil {
+			fmt.Println("bad")
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
 		sess, err := store.Get(c)
 		if err != nil {
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
+		username := sess.Get("username")
+		if username == nil {
+			return c.JSON(fiber.Map{"status": "ERROR"})
+		}
 		var user RegisteredUser
-		err = registeredusers.FindOne(context.TODO(), bson.D{{`username`, sess.Get("username")}}).Decode(&user)
+		err = registeredusers.FindOne(context.TODO(), bson.D{{`username`, username}}).Decode(&user)
 		var game Game
-		err = games.FindOne(context.TODO(), bson.D{{"_id", user.RecentGame}}).Decode(&game)
-		grid := game.Grid
+		if user.RecentGame == -1 {
+			newGameID := newGame(games)
+			_, _ = registeredusers.UpdateOne(context.TODO(), bson.D{{"username", user.Username}}, bson.D{{"$set", bson.D{{"recentgame", newGameID}}}})
+			err = games.FindOne(context.TODO(), bson.D{{"_id", newGameID}}).Decode(&game)
+			user.RecentGame = newGameID
+		} else {
+			err = games.FindOne(context.TODO(), bson.D{{"_id", user.RecentGame}}).Decode(&game)
+		}
+		if mo.Move == nil {
+			_, err = games.UpdateOne(context.TODO(), bson.D{{"_id", user.RecentGame}}, bson.D{{"$set", bson.D{{"grid", game.Grid}}}})
+			return c.JSON(fiber.Map{"status": "OK", "grid": game.Grid, "winner": game.Winner})
+		}
+		grid := &game.Grid
 		if &mo.Move == nil {
 			return c.JSON(user.RecentGame)
 		}
-		if grid[int(mo.Move)] != ' ' {
+
+		if (*grid)[int(*mo.Move)] != " " {
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
-		grid[mo.Move] = 'X'
+		(*grid)[*mo.Move] = "X"
+		/*
+			Playing Game
+		*/
+		/**/
+
 		playGame(&game)
-		if game.Winner != ' ' {
-			update := bson.D{{"$set", bson.D{{"recentgame", newGame(games)}}}, {"$push", bson.D{{"games", user.RecentGame}}}}
+		if game.Winner != " " { /* newGame(games) instead of -1 maybe */
+			_, err = games.UpdateOne(context.TODO(), bson.D{{"_id", user.RecentGame}}, bson.D{{"$set", bson.D{{"grid", game.Grid}}}})
+			_, err = games.UpdateOne(context.TODO(), bson.D{{"_id", user.RecentGame}}, bson.D{{"$set", bson.D{{"winner", game.Winner}}}})
+			update := bson.D{{"$set", bson.D{{"recentgame", -1}}}, {"$push", bson.D{{"games", user.RecentGame}}}}
 			_, _ = registeredusers.UpdateOne(context.TODO(), bson.D{{"username", user.Username}}, update)
-			return c.JSON(game)
+			return c.JSON(fiber.Map{"status": "OK", "grid": game.Grid, "winner": game.Winner})
 		} else {
 			_, err := games.UpdateOne(context.TODO(), bson.D{{"_id", user.RecentGame}}, bson.D{{"$set", bson.D{{"grid", game.Grid}}}})
 			if err != nil {
 				return err
 			}
-			return c.JSON(game)
+			fmt.Println(game)
+			return c.JSON(fiber.Map{"status": "OK", "grid": game.Grid, "winner": game.Winner})
 		}
 	})
 
 	app.Post("/listgames", func(c *fiber.Ctx) error {
 		sess, err := store.Get(c)
 		var user RegisteredUser
-
-		fmt.Println(sess.Get("username"))
-
 		err = registeredusers.FindOne(context.TODO(), bson.D{{`username`, sess.Get("username")}}).Decode(&user)
 		if err != nil {
-			fmt.Println("herr2e")
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
 		var game Game
-		fmt.Println(user.Games)
-		gameArray := make([]Game, len(user.Games)+1)
+		type listGameSt struct {
+			Id        int32  `json:"id"`
+			StartDate string `json:"start_date"`
+		}
+		type listGameRet struct {
+			Status string       `json:"status"`
+			Games  []listGameSt `json:"games"`
+		}
+		var length int
+		if user.RecentGame == -1 {
+			length = len(user.Games)
+
+		} else {
+			length = len(user.Games) + 1
+		}
+		gameArray := make([]listGameSt, length)
 		for i := 0; i < len(user.Games); i++ {
 			err := games.FindOne(context.TODO(), bson.D{{"_id", user.Games[i]}}).Decode(&game)
+			gameArray[i] = listGameSt{game.Id, game.StartDate}
 			if err != nil {
 				return err
 			}
-			gameArray[i] = game
 		}
-		err = games.FindOne(context.TODO(), bson.D{{"_id", user.RecentGame}}).Decode(&game)
-		if err != nil {
-			return err
+		if user.RecentGame != -1 {
+			err = games.FindOne(context.TODO(), bson.D{{"_id", user.RecentGame}}).Decode(&game)
+			gameArray[len(user.Games)] = listGameSt{game.Id, game.StartDate}
+			if err != nil {
+				return err
+			}
 		}
-		gameArray[len(user.Games)] = game
-		jsonGames, _ := json.Marshal(gameArray)
-		//fiber.Map{"status": "OK", "games": string(jsonGames)}
-		temp, _ := json.Marshal(fiber.Map{"status": "OK", "games": string(jsonGames)})
-		fmt.Println(string(temp))
-		return c.JSON(fiber.Map{"status": "OK", "games": string(jsonGames)})
-		//return c.JSON(fmt.Sprintf(`"status":"OK", "games" : "%s"`, string(jsonGames)))
+		return c.JSON(listGameRet{"OK", gameArray})
 	})
 
 	app.Post("/getgame", func(c *fiber.Ctx) error {
 		var game Game
-		if err := c.BodyParser(game); err != nil {
+		if err := c.BodyParser(&game); err != nil {
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
 		err = games.FindOne(context.TODO(), bson.D{{"_id", game.Id}}).Decode(&game)
@@ -347,9 +373,9 @@ func main() {
 		}
 
 		type GetGameResponse struct {
-			Status string `json:"status"`
-			Grid   []rune `json:"grid"`
-			Winner rune   `json:"winner"`
+			Status string   `json:"status"`
+			Grid   []string `json:"grid"`
+			Winner string   `json:"winner"`
 		}
 		//return c.JSON(fiber.Map{"status": "OK", "grid": string(game.Grid), "winner": game.Winner})
 		return c.JSON(GetGameResponse{"OK", game.Grid, game.Winner})
@@ -361,38 +387,36 @@ func main() {
 		var user RegisteredUser
 		err = registeredusers.FindOne(context.TODO(), bson.D{{`username`, sess.Get("username")}}).Decode(&user)
 		if err != nil {
+			fmt.Println("prob1")
 			return c.JSON(fiber.Map{"status": "ERROR"})
 		}
 		wins := 0
 		ties := 0
 		wopr := 0
 		gs := user.Games
+
 		var game Game
 		for i := 0; i < len(gs); i++ {
-			err := games.FindOne(context.TODO(), bson.D{{"_id", game.Id}}).Decode(&game)
+			err := games.FindOne(context.TODO(), bson.D{{"_id", gs[i]}}).Decode(&game)
 			if err != nil {
+
 				return c.JSON(fiber.Map{"status": "ERROR"})
 			}
-			if game.Winner == 'X' {
+			if game.Winner == "X" {
 				wins++
 				continue
-			} else if game.Winner == 'T' {
+			} else if game.Winner == "T" {
 				ties++
 				continue
-			} else if game.Winner == 'O' {
+			} else if game.Winner == "O" {
 				wopr++
 				continue
 			}
 		}
-
-		type GetScoreResponse struct {
-			Status string `json:"status"`
-			Human  int    `json:"human"`
-			Wopr   int    `json:"wopr"`
-			Tie    int    `json:"tie"`
-		}
-		return c.JSON(GetScoreResponse{"OK", wins, wopr, ties})
-		//return c.JSON(fmt.Sprintf(`"status":"OK", "human" : %d, "wopr": %d, "tie" : %d`, wins, wopr, ties))
+		fmt.Println(wins)
+		fmt.Println(wopr)
+		fmt.Println(ties)
+		return c.JSON(fiber.Map{"status": "OK", "human": wins, "wopr": wopr, "tie": ties})
 	})
 
 	FiberErr := app.Listen(":80")
