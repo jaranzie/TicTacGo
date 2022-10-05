@@ -17,11 +17,11 @@ GET /verify { email, key } -- Verification link with the two parameters in the q
 
 4. Maintain the history of previously played games by the user that is currently logged in:
 /listgames { }
->>>  { status: 'OK', games: [{id, start_date}, …] }
+  { status: 'OK', games: [{id, start_date}, …] }
 /getgame { id }
->>>  { status: 'OK', grid: ['X','O', …], winner: 'X' }
+  { status: 'OK', grid: ['X','O', …], winner: 'X' }
 /getscore { }
->>>  { status: 'OK', human: 0, wopr: 5, tie: 10 }.
+  { status: 'OK', human: 0, wopr: 5, tie: 10 }.
 
 Clarification: all of the above API calls must be to POST routes unless otherwise specified. Add a 'status' property to all JSON responses with the value 'OK' or 'ERROR'. Use your judgement for possible operations/situations that may lead to an error.
 
